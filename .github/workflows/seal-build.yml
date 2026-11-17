@@ -1,0 +1,26 @@
+name: seal-build
+
+# Sealed build: package the jar. The test suite runs on Travis (.travis.yml).
+on:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # The published jar was built with JDK 1.8.0_222 and Maven 3.6.1 (manifest headers).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+      - name: Package (tests run on Travis)
+        run: |
+          source .travis/seal-setup.sh
+          mvn -B -V -e clean package -DskipTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spring-data-commons-jar
+          path: target/spring-data-commons-1.13.23.RELEASE.jar
+          if-no-files-found: error

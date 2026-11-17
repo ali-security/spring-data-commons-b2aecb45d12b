@@ -1,27 +1,40 @@
 language: java
 
-jdk:
-  - oraclejdk8
+# Sealed build: Travis no longer provisions oraclejdk8; openjdk8 on focal instead.
+dist: focal
 
+jdk:
+  - openjdk8
+
+# Sealed build: the *-next profiles (spring43-next, spring5-next, spring51-next,
+# spring52-next, querydsl-next) resolve BUILD-SNAPSHOT versions from
+# repo.spring.io / oss.sonatype.org snapshot repositories that no longer serve
+# them, so those legs are dropped. The spring52 profile pins Spring 5.2.0.M3, a
+# milestone only ever published to repo.spring.io/libs-milestone (now 401), so
+# that leg runs the same profile against the 5.2.0.RELEASE GA from Maven Central.
 env:
   matrix:
     - PROFILE=ci
-    - PROFILE=spring43-next
     - PROFILE=spring5
-    - PROFILE=spring5-next
     - PROFILE=spring51
-    - PROFILE=spring51-next
-    - PROFILE=spring52
-    - PROFILE=spring52-next
-    - PROFILE=querydsl-next
+    - PROFILE=spring52 SEAL_MVN_ARGS=-Dspring=5.2.0.RELEASE
 
 cache:
   directories:
     - $HOME/.m2
 
+# Sealed build: Maven 3.6.1, Maven Central mirror and the bundlor-free parent pom
+# (see .travis/seal-setup.sh).
+before_install: source .travis/seal-setup.sh
+
 install: true
 
-script: "mvn clean dependency:list test -P${PROFILE} -Dsort -U"
+script:
+  - mvn -B clean dependency:list test -P${PROFILE} -Dsort -U ${SEAL_MVN_ARGS}
+  - python3 .travis/surefire-summary.py
+
+# Sealed build: keep the job open until Travis has archived the test summary.
+after_script: bash .travis/wait-for-log.sh
 
 notifications:
   slack:
