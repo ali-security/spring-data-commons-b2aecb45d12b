@@ -38,6 +38,7 @@ import org.springframework.util.StringUtils;
 public class PropertyPath implements Iterable<PropertyPath> {
 
 	private static final String PARSE_DEPTH_EXCEEDED = "Trying to parse a path with depth greater than 1000! This has been disabled for security reasons to prevent parsing overflows.";
+	private static final int MAX_PARSE_DEPTH = 1000;
 
 	private static final String DELIMITERS = "_\\.";
 	private static final String ALL_UPPERCASE = "[A-Z0-9._$]+";
@@ -262,7 +263,11 @@ public class PropertyPath implements Iterable<PropertyPath> {
 		Matcher matcher = SPLITTER.matcher("_" + source);
 
 		while (matcher.find()) {
+
 			iteratorSource.add(matcher.group(1));
+			if (iteratorSource.size() > MAX_PARSE_DEPTH) {
+				throw new IllegalArgumentException(PARSE_DEPTH_EXCEEDED);
+			}
 		}
 
 		Iterator<String> parts = iteratorSource.iterator();
@@ -309,7 +314,7 @@ public class PropertyPath implements Iterable<PropertyPath> {
 	 * @return
 	 */
 	private static PropertyPath create(String source, TypeInformation<?> type, List<PropertyPath> base) {
-		return create(source, type, "", base);
+		return create(source, type, "", base, MAX_PARSE_DEPTH - base.size());
 	}
 
 	/**
@@ -322,9 +327,10 @@ public class PropertyPath implements Iterable<PropertyPath> {
 	 * @param addTail
 	 * @return
 	 */
-	private static PropertyPath create(String source, TypeInformation<?> type, String addTail, List<PropertyPath> base) {
+	private static PropertyPath create(String source, TypeInformation<?> type, String addTail, List<PropertyPath> base,
+			int remainingDepth) {
 
-		if (base.size() > 1000) {
+		if (base.size() > MAX_PARSE_DEPTH || remainingDepth <= 0) {
 			throw new IllegalArgumentException(PARSE_DEPTH_EXCEEDED);
 		}
 
@@ -367,7 +373,7 @@ public class PropertyPath implements Iterable<PropertyPath> {
 			String tail = source.substring(position);
 
 			try {
-				return create(head, type, tail + addTail, base);
+				return create(head, type, tail + addTail, base, remainingDepth - 1);
 			} catch (PropertyReferenceException e) {
 				throw e.hasDeeperResolutionDepthThan(exception) ? e : exception;
 			}
