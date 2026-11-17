@@ -37,7 +37,7 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.core.GenericTypeResolver;
 import org.springframework.util.Assert;
 import org.springframework.util.ClassUtils;
-import org.springframework.util.ReflectionUtils;
+import org.springframework.util.StringUtils;
 
 /**
  * Basic {@link TypeDiscoverer} that contains basic functionality to discover property types.
@@ -60,7 +60,7 @@ class TypeDiscoverer<S> implements TypeInformation<S> {
 
 	private final Type type;
 	private final Map<TypeVariable<?>, Type> typeVariableMap;
-	private final Map<String, ValueHolder> fieldTypes = new ConcurrentHashMap<String, ValueHolder>();
+	private volatile Map<String, TypeInformation<?>> fields;
 	private final int hashCode;
 
 	private boolean componentTypeResolved = false;
@@ -188,15 +188,7 @@ class TypeDiscoverer<S> implements TypeInformation<S> {
 		int separatorIndex = fieldname.indexOf('.');
 
 		if (separatorIndex == -1) {
-
-			if (fieldTypes.containsKey(fieldname)) {
-				return fieldTypes.get(fieldname).getType();
-			}
-
-			TypeInformation<?> propertyInformation = getPropertyInformation(fieldname);
-			fieldTypes.put(fieldname, ValueHolder.of(propertyInformation));
-
-			return propertyInformation;
+			return getProperties().get(fieldname);
 		}
 
 		String head = fieldname.substring(0, separatorIndex);
@@ -205,53 +197,104 @@ class TypeDiscoverer<S> implements TypeInformation<S> {
 	}
 
 	/**
-	 * Returns the {@link TypeInformation} for the given atomic field. Will inspect fields first and return the type of a
-	 * field if available. Otherwise it will fall back to a {@link PropertyDescriptor}.
+	 * Returns the {@link TypeInformation} for all atomic properties of the current type, computing them on first access.
 	 * 
-	 * @see #getGenericType(PropertyDescriptor)
-	 * @param fieldname
-	 * @return
+	 * @return will never be {@literal null}.
 	 */
-	private TypeInformation<?> getPropertyInformation(String fieldname) {
+	private Map<String, TypeInformation<?>> getProperties() {
 
-		Class<?> rawType = getType();
-		Field field = ReflectionUtils.findField(rawType, fieldname);
+		Map<String, TypeInformation<?>> properties = this.fields;
 
-		if (field != null) {
-			return createInfo(field.getGenericType());
+		if (properties == null) {
+			properties = doGetProperties();
+			this.fields = properties;
 		}
 
-		PropertyDescriptor descriptor = findPropertyDescriptor(rawType, fieldname);
-		return descriptor == null ? null : createInfo(getGenericType(descriptor));
+		return properties;
 	}
 
 	/**
-	 * Finds the {@link PropertyDescriptor} for the property with the given name on the given type.
+	 * Returns the {@link TypeInformation} for all atomic properties of the current type. Will inspect fields first and
+	 * use the type of a field if available, the field declared closest to the current type in the class hierarchy
+	 * winning. Otherwise it will fall back to {@link PropertyDescriptor}s. All properties are computed at once so that
+	 * lookups for arbitrary property names do not let the resulting {@link Map} grow.
+	 * 
+	 * @see #getGenericType(PropertyDescriptor)
+	 * @return will never be {@literal null}.
+	 */
+	private Map<String, TypeInformation<?>> doGetProperties() {
+
+		Map<String, TypeInformation<?>> result = new HashMap<String, TypeInformation<?>>();
+		Class<?> rawType = getType();
+
+		// Inspect fields first
+		Class<?> searchType = rawType;
+
+		while (searchType != null && !Object.class.equals(searchType)) {
+
+			for (Field field : searchType.getDeclaredFields()) {
+				if (!result.containsKey(field.getName())) {
+					result.put(field.getName(), createInfo(field.getGenericType()));
+				}
+			}
+
+			searchType = searchType.getSuperclass();
+		}
+
+		// Also inspect property descriptors
+		addPropertyDescriptors(rawType, result, new HashSet<Class<?>>());
+
+		return Collections.unmodifiableMap(result);
+	}
+
+	/**
+	 * Adds the {@link TypeInformation} for all {@link PropertyDescriptor}s of the given type not already contained in the
+	 * given {@link Map} and continues with the interfaces implemented by the given type. Also registers the capitalized
+	 * and uncapitalized variants of the property names to retain the lenient name matching of
+	 * {@link BeanUtils#getPropertyDescriptor(Class, String)}.
 	 * 
 	 * @param type must not be {@literal null}.
-	 * @param fieldname must not be {@literal null} or empty.
-	 * @return
+	 * @param result must not be {@literal null}.
+	 * @param visited must not be {@literal null}.
 	 */
-	private static PropertyDescriptor findPropertyDescriptor(Class<?> type, String fieldname) {
+	private void addPropertyDescriptors(Class<?> type, Map<String, TypeInformation<?>> result, Set<Class<?>> visited) {
 
-		PropertyDescriptor descriptor = BeanUtils.getPropertyDescriptor(type, fieldname);
-
-		if (descriptor != null) {
-			return descriptor;
+		if (!visited.add(type)) {
+			return;
 		}
 
-		List<Class<?>> superTypes = new ArrayList<Class<?>>();
-		superTypes.addAll(Arrays.asList(type.getInterfaces()));
-		superTypes.add(type.getSuperclass());
+		Map<String, TypeInformation<?>> lenient = new HashMap<String, TypeInformation<?>>();
 
-		for (Class<?> interfaceType : type.getInterfaces()) {
-			descriptor = findPropertyDescriptor(interfaceType, fieldname);
-			if (descriptor != null) {
-				return descriptor;
+		for (PropertyDescriptor descriptor : BeanUtils.getPropertyDescriptors(type)) {
+
+			Type genericType = getGenericType(descriptor);
+
+			if (genericType == null) {
+				continue;
 			}
+
+			String name = descriptor.getName();
+			TypeInformation<?> information = createInfo(genericType);
+
+			putIfAbsent(result, name, information);
+			putIfAbsent(lenient, StringUtils.uncapitalize(name), information);
+			putIfAbsent(lenient, StringUtils.capitalize(name), information);
 		}
 
-		return null;
+		for (Map.Entry<String, TypeInformation<?>> entry : lenient.entrySet()) {
+			putIfAbsent(result, entry.getKey(), entry.getValue());
+		}
+
+		for (Class<?> candidate : type.getInterfaces()) {
+			addPropertyDescriptors(candidate, result, visited);
+		}
+	}
+
+	private static <K, V> void putIfAbsent(Map<K, V> map, K key, V value) {
+
+		if (!map.containsKey(key)) {
+			map.put(key, value);
+		}
 	}
 
 	/**

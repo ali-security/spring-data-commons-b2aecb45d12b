@@ -18,6 +18,7 @@ package org.springframework.data.web;
 import static java.util.Collections.*;
 import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.*;
+import static org.springframework.data.util.TypeDiscovererUnitTests.getSizesOfMapsHeldBy;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -36,6 +37,8 @@ import org.springframework.beans.ConfigurablePropertyAccessor;
 import org.springframework.beans.MutablePropertyValues;
 import org.springframework.beans.NotWritablePropertyException;
 import org.springframework.beans.PropertyValues;
+import org.springframework.data.util.ClassTypeInformation;
+import org.springframework.data.util.TypeInformation;
 import org.springframework.expression.spel.SpelEvaluationException;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.format.annotation.DateTimeFormat.ISO;
@@ -101,6 +104,29 @@ public class MapDataBinderUnitTests {
 		values.add("somethingWeird", "Value");
 
 		assertThat(bind(values), is(Collections.<String, Object> emptyMap()));
+	}
+
+	@Test // GH-3500
+	public void doesNotRetainUnknownPropertyNames() {
+
+		TypeInformation<Root> type = ClassTypeInformation.from(Root.class);
+
+		MutablePropertyValues values = new MutablePropertyValues();
+		values.add("foo.firstname", "Dave");
+
+		assertThat(bind(values).isEmpty(), is(false));
+
+		Map<String, Integer> sizes = getSizesOfMapsHeldBy(type);
+
+		for (int i = 0; i < 1000; i++) {
+
+			MutablePropertyValues unknown = new MutablePropertyValues();
+			unknown.add("unknownProperty" + i, "Value");
+
+			assertThat(bind(unknown), is(Collections.<String, Object> emptyMap()));
+		}
+
+		assertThat(getSizesOfMapsHeldBy(type), is(sizes));
 	}
 
 	@Test // DATACMNS-1264

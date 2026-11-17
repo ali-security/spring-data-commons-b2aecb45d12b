@@ -18,6 +18,7 @@ package org.springframework.data.mapping;
 import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.*;
 import static org.springframework.data.mapping.PropertyPath.*;
+import static org.springframework.data.util.TypeDiscovererUnitTests.getSizesOfMapsHeldBy;
 
 import java.util.Iterator;
 import java.util.Map;
@@ -377,6 +378,28 @@ public class PropertyPathUnitTests {
 	@Test // DATACMNS-1304
 	public void detectsNestedSingleCharacterProperty() {
 		assertThat(from("category_B", Product.class).toDotPath(), is("category.b"));
+	}
+
+	@Test // GH-3500
+	public void doesNotRetainUnresolvablePropertyNames() {
+
+		TypeInformation<FooBar> type = ClassTypeInformation.from(FooBar.class);
+
+		assertThat(from("name", type).toDotPath(), is("name"));
+
+		Map<String, Integer> sizes = getSizesOfMapsHeldBy(type);
+
+		for (int i = 0; i < 1000; i++) {
+
+			try {
+				from("unknownProperty" + i, type);
+				fail("Expected PropertyReferenceException!");
+			} catch (PropertyReferenceException o_O) {
+				// expected
+			}
+		}
+
+		assertThat(getSizesOfMapsHeldBy(type), is(sizes));
 	}
 
 	private class Foo {

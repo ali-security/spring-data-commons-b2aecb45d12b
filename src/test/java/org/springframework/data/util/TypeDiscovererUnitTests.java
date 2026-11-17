@@ -20,10 +20,13 @@ import static org.junit.Assert.*;
 import static org.springframework.data.util.ClassTypeInformation.*;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -32,6 +35,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
+import org.springframework.util.ReflectionUtils.FieldCallback;
+import org.springframework.util.ReflectionUtils.FieldFilter;
 
 /**
  * Unit tests for {@link TypeDiscoverer}.
@@ -157,6 +162,77 @@ public class TypeDiscovererUnitTests {
 		assertThat(adressIterable.getComponentType(), is(reference));
 	}
 
+	@Test // GH-3500
+	public void superclassFieldsDoNotHideSubclassFields() {
+
+		TypeDiscoverer<TheOne> discoverer = new TypeDiscoverer<TheOne>(TheOne.class, EMPTY_MAP);
+
+		assertEquals(String.class, discoverer.getProperty("theOne").getType());
+		assertEquals(String.class, discoverer.getProperty("theOther").getType());
+	}
+
+	@Test // GH-3500
+	public void doesNotRetainLookupsForUnknownProperties() {
+
+		TypeDiscoverer<Person> discoverer = new TypeDiscoverer<Person>(Person.class, EMPTY_MAP);
+
+		assertThat(discoverer.getProperty("addresses"), is(notNullValue()));
+
+		Map<String, Integer> sizes = getSizesOfMapsHeldBy(discoverer);
+
+		for (int i = 0; i < 10000; i++) {
+			assertThat(discoverer.getProperty("unknown" + i), is(nullValue()));
+		}
+
+		assertThat(getSizesOfMapsHeldBy(discoverer), is(sizes));
+	}
+
+	/**
+	 * Returns the sizes of all {@link Map}s held in instance fields of the given object.
+	 */
+	public static Map<String, Integer> getSizesOfMapsHeldBy(final Object target) {
+
+		final Map<String, Integer> sizes = new HashMap<String, Integer>();
+
+		org.springframework.util.ReflectionUtils.doWithFields(target.getClass(), new FieldCallback() {
+
+			@Override
+			public void doWith(Field field) throws IllegalArgumentException, IllegalAccessException {
+
+				org.springframework.util.ReflectionUtils.makeAccessible(field);
+				Object value = field.get(target);
+
+				if (value instanceof Map) {
+					sizes.put(field.getName(), ((Map<?, ?>) value).size());
+				}
+			}
+		}, new FieldFilter() {
+
+			@Override
+			public boolean matches(Field field) {
+				return !Modifier.isStatic(field.getModifiers());
+			}
+		});
+
+		return sizes;
+	}
+
+	@Test // GH-3500
+	public void resolvesPropertiesFromAccessorsAndInterfaces() {
+
+		TypeInformation<AccessorsOnly> type = from(AccessorsOnly.class);
+
+		assertEquals(String.class, type.getProperty("firstname").getType());
+		assertEquals(String.class, type.getProperty("Firstname").getType());
+		assertEquals(Locale.class, type.getProperty("lastname").getType());
+		assertThat(type.getProperty("Unknown"), is(nullValue()));
+
+		TypeInformation<ExtendedNamed> extended = from(ExtendedNamed.class);
+
+		assertEquals(String.class, extended.getProperty("name").getType());
+		assertEquals(String.class, extended.getProperty("nickname").getType());
+	}
+
 	class Person {
 
 		Addresses addresses;
@@ -193,5 +269,31 @@ public class TypeDiscovererUnitTests {
 		public GenericConstructors(List<String> first, Locale second) {
 
 		}
+	}
+
+	// GH-3500
+
+	static class SuperclassWithProperties {
+		private CharSequence theOne;
+		private String theOther;
+	}
+
+	class TheOne extends SuperclassWithProperties {
+		private String theOne;
+	}
+
+	static abstract class AccessorsOnly {
+
+		public abstract String getFirstname();
+
+		public abstract void setLastname(Locale lastname);
+	}
+
+	interface Named {
+		String getName();
+	}
+
+	interface ExtendedNamed extends Named {
+		String getNickname();
 	}
 }

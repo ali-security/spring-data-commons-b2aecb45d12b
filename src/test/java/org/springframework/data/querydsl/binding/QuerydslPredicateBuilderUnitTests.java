@@ -17,10 +17,12 @@ package org.springframework.data.querydsl.binding;
 
 import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.*;
+import static org.springframework.data.util.TypeDiscovererUnitTests.getSizesOfMapsHeldBy;
 import static org.springframework.test.util.ReflectionTestUtils.*;
 
 import java.text.ParseException;
 import java.util.List;
+import java.util.Map;
 
 import org.joda.time.DateTime;
 import org.joda.time.format.DateTimeFormat;
@@ -78,6 +80,26 @@ public class QuerydslPredicateBuilderUnitTests {
 	public void getPredicateShouldReturnEmptyPredicateWhenPropertiesAreEmpty() {
 
 		assertThat(builder.getPredicate(ClassTypeInformation.OBJECT, values, DEFAULT_BINDINGS), is(nullValue()));
+	}
+
+	@Test // GH-3500
+	public void doesNotRetainUnknownRequestParameterNames() {
+
+		values.add("firstname", "Oliver");
+
+		assertThat(builder.getPredicate(USER_TYPE, values, DEFAULT_BINDINGS), is(notNullValue()));
+
+		Map<String, Integer> sizes = getSizesOfMapsHeldBy(USER_TYPE);
+
+		for (int i = 0; i < 1000; i++) {
+
+			MultiValueMap<String, String> parameters = new LinkedMultiValueMap<String, String>();
+			parameters.add("unknownProperty" + i, "value");
+
+			assertThat(builder.getPredicate(USER_TYPE, parameters, DEFAULT_BINDINGS), is(nullValue()));
+		}
+
+		assertThat(getSizesOfMapsHeldBy(USER_TYPE), is(sizes));
 	}
 
 	@Test // DATACMNS-669
