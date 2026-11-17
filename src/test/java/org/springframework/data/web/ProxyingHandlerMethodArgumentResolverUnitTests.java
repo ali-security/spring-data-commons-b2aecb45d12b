@@ -16,6 +16,7 @@
 package org.springframework.data.web;
 
 import static org.hamcrest.CoreMatchers.*;
+import static org.hamcrest.Matchers.hasSize;
 import static org.junit.Assert.*;
 
 import java.lang.reflect.Method;
@@ -24,9 +25,12 @@ import java.util.List;
 import org.junit.Test;
 import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.core.MethodParameter;
+import org.springframework.core.SpringProperties;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.data.web.ProjectingJackson2HttpMessageConverterUnitTests.SampleInterface;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.ServletWebRequest;
 
 /**
  * Unit tests for {@link ProxyingHandlerMethodArgumentResolver}.
@@ -83,10 +87,61 @@ public class ProxyingHandlerMethodArgumentResolverUnitTests {
 		assertThat(resolver.supportsParameter(parameter), is(false));
 	}
 
+	@Test // GH-3495
+	public void bindsCollectionValuesWithinDefaultLimit() throws Exception {
+		assertThat(bindFooBar(resolver, 1023), hasSize(1024));
+	}
+
+	@Test // GH-3495
+	public void doesNotGrowCollectionsBeyondDefaultLimitOnBinding() throws Exception {
+		assertNullOrEmpty(bindFooBar(resolver, 10000000));
+	}
+
+	@Test // GH-3495
+	public void considersCollectionLimitConfiguredViaSpringProperties() throws Exception {
+
+		SpringProperties.setProperty(ProxyingHandlerMethodArgumentResolver.COLLECTION_SIZE_LIMIT_PARAM, "10");
+
+		try {
+
+			ProxyingHandlerMethodArgumentResolver customized = new ProxyingHandlerMethodArgumentResolver(
+					conversionService, true);
+
+			assertThat(bindFooBar(customized, 9), hasSize(10));
+			assertNullOrEmpty(bindFooBar(customized, 10));
+
+		} finally {
+			SpringProperties.setProperty(ProxyingHandlerMethodArgumentResolver.COLLECTION_SIZE_LIMIT_PARAM, null);
+		}
+	}
+
+	private static List<String> bindFooBar(ProxyingHandlerMethodArgumentResolver resolver, int index)
+			throws Exception {
+
+		MethodParameter parameter = new MethodParameter(Controller.class.getMethod("with", CollectionPayload.class), 0);
+
+		MockHttpServletRequest request = new MockHttpServletRequest();
+		request.addParameter(String.format("fooBar[%s]", index), "Spring");
+
+		CollectionPayload payload = (CollectionPayload) resolver.createAttribute("payload", parameter, null,
+				new ServletWebRequest(request));
+
+		return payload.getFooBar();
+	}
+
+	private static void assertNullOrEmpty(List<String> values) {
+		assertThat(values == null || values.isEmpty(), is(true));
+	}
+
 	@ProjectedPayload
 	interface AnnotatedInterface {}
 
 	interface UnannotatedInterface {}
+
+	@ProjectedPayload
+	interface CollectionPayload {
+		List<String> getFooBar();
+	}
 
 	interface Controller {
 
@@ -95,6 +150,8 @@ public class ProxyingHandlerMethodArgumentResolverUnitTests {
 		void with(UnannotatedInterface param);
 
 		void with(SampleInterface param);
+
+		void with(CollectionPayload param);
 
 		void with(List<Object> param);
 	}

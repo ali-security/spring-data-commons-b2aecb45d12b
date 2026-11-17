@@ -153,6 +153,66 @@ public class MapDataBinderUnitTests {
 		accessor.setPropertyValue("fooBar[T(java.lang.String)]", null);
 	}
 
+	@Test // GH-3495
+	public void acceptsValuesWithinConfiguredMaxCollectionSize() {
+
+		MapDataBinder dataBinder = new MapDataBinder(Bar.class, new DefaultFormattingConversionService());
+		dataBinder.setAutoGrowCollectionLimit(300);
+		ConfigurablePropertyAccessor accessor = dataBinder.getPropertyAccessor();
+
+		accessor.setPropertyValue("fooBar[299]", "Spring");
+
+		assertThat((Collection<?>) dataBinder.getTarget().get("fooBar"), hasSize(300));
+	}
+
+	@Test // GH-3495
+	public void rejectsValuesBeyondCustomizedMaxCollectionSize() {
+
+		MapDataBinder dataBinder = new MapDataBinder(Bar.class, new DefaultFormattingConversionService());
+		dataBinder.setAutoGrowCollectionLimit(300);
+		ConfigurablePropertyAccessor accessor = dataBinder.getPropertyAccessor();
+
+		exception.expect(NotWritablePropertyException.class);
+		exception.expectCause(is(Matchers.<Throwable> instanceOf(SpelEvaluationException.class)));
+
+		accessor.setPropertyValue("fooBar[300]", "Spring");
+	}
+
+	@Test // GH-3495
+	public void rejectsValuesBeyondConfiguredMaxCollectionSize() {
+
+		newAccessor().setPropertyValue("fooBar[299]", "Spring");
+
+		exception.expect(NotWritablePropertyException.class);
+		exception.expectCause(is(Matchers.<Throwable> instanceOf(SpelEvaluationException.class)));
+
+		newAccessor().setPropertyValue("fooBar[2000]", "Spring");
+	}
+
+	@Test // GH-3495
+	public void rejectsAssignmentsWithinPropertyPath() {
+
+		MapDataBinder dataBinder = new MapDataBinder(Bar.class, new DefaultFormattingConversionService());
+		ConfigurablePropertyAccessor accessor = dataBinder.getPropertyAccessor();
+
+		try {
+			accessor.setPropertyValue("fooBar[fooBar='Spring']", "Data");
+			fail("Expected NotWritablePropertyException!");
+		} catch (NotWritablePropertyException o_O) {
+			assertThat(o_O.getCause(), is(Matchers.<Throwable> instanceOf(SpelEvaluationException.class)));
+		}
+
+		assertThat(dataBinder.getTarget(), not(hasEntry("fooBar", (Object) "Spring")));
+	}
+
+	/**
+	 * A collection is only ever grown on the first write to a property, so every assertion about the limit needs to start
+	 * from a fresh, empty target.
+	 */
+	private static ConfigurablePropertyAccessor newAccessor() {
+		return new MapDataBinder(Bar.class, new DefaultFormattingConversionService()).getPropertyAccessor();
+	}
+
 	private static Map<String, Object> bind(PropertyValues values) {
 
 		MapDataBinder binder = new MapDataBinder(Root.class, new DefaultFormattingConversionService());
